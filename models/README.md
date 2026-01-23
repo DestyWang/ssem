@@ -1,12 +1,25 @@
-#### SSEM
+# SSEM
 
-本目录包含体电镜切片去除非线性畸变的核心模型组件。当前新增的关键模块如下：
+### Theory
+#### 方法1 （旧版方法，已废弃）
+对每张切片$S_k$单独配准，邻居切片均使用原始图片：
+$$
+\Phi_k^* = \arg\min_{\Phi_k} \sum_{i=-r, i\neq 0}^{r}\lambda_i W_{2,\epsilon}^2(\Phi_k(S_k), S_{k+i}) +\text{Reg}(\Phi_k)
+$$
+其中$r$是窗口大小，$\lambda_i$是权重，$\text{Reg}(\cdot)$是对畸变场的正则化项，确保畸变场符合一些物理约束。
 
-- `deform.py`：实现基于 LDDMM 的非线性形变估计，配准损失为 Wasserstein barycenter 目标。
-- `wasserstein2_loss.py`：熵正则化的 Wasserstein-2 距离（支持梯度反传，CUDA）。
-- `utils.py`：通用工具函数（网格、变形、归一化、正则等）。
+#### 方法2 （目前默认的方法）
+直接全局配准，使用的是形变场作用后的邻居切片，互相之间有关联。
+$$
+\{\Phi_k^*\} = \arg\min_{\{\Phi_k\}} \sum_{i=-r, i\neq 0}^{r}\lambda_i W_{2,\epsilon}^2(\Phi_k(S_k), \Phi_{k+i}(S_{k+i})) +\text{Reg}(\{\Phi_k\})
+$$
 
----
+由于对称性，问题可以消除一半的冗余计算，得到
+$$
+\{\Phi_k^*\} = \arg\min_{\{\Phi_k\}} \sum_{i=1}^{r}\lambda_i W_{2,\epsilon}^2(\Phi_k(S_k), \Phi_{k+i}(S_{k+i})) +\text{Reg}(\{\Phi_k\})
+$$
+
+注意当邻居不存在时（下标不在$[1,N]$范围内），则不考虑当前切片，对求和的贡献为零。
 
 ### LDDMM 说明（`deform.py`）
 

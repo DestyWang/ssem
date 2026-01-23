@@ -35,6 +35,10 @@ class LDDMM(nn.Module):
         reg_weight: float = 1e-3,
         sum_target: float = 1e7,
         device: torch.device = torch.device('cuda'),
+        interp_mode: str = "bicubic",
+        padding_mode: str = "border",
+        align_corners: bool = True,
+        mass_preserve: bool = True,
         w2_paras: Optional[Dict[str, float]] = None,
     ) -> None:
         """
@@ -48,6 +52,14 @@ class LDDMM(nn.Module):
             高斯平滑标准差。
         reg_weight : float
             正则化权重。
+        interp_mode : str
+            重采样插值方式，建议 "bicubic" 或 "bilinear"。
+        padding_mode : str
+            超出边界的采样策略。
+        align_corners : bool
+            grid_sample 的对齐方式。
+        mass_preserve : bool
+            是否进行强度守恒（乘以雅可比行列式）。
         w2_paras : dict | None
             Wasserstein2Loss 的参数字典。
         """
@@ -59,6 +71,10 @@ class LDDMM(nn.Module):
         self.w2 = Wasserstein2Loss(**(w2_paras or {}))
         self.sum_target = float(sum_target)
         self.device = device
+        self.interp_mode = interp_mode
+        self.padding_mode = padding_mode
+        self.align_corners = bool(align_corners)
+        self.mass_preserve = bool(mass_preserve)
 
         # 速度场参数：形状 (T, 2, H, W)
         self.velocity = nn.Parameter(
@@ -103,7 +119,7 @@ class LDDMM(nn.Module):
         for t in range(self.time_steps):
             v = self.velocity[t].unsqueeze(0).expand(batch_size, -1, -1, -1)
             v = smooth_field(v, self.smooth_sigma)
-            v_at = sample_field(v, flow)
+            v_at = sample_field(v, flow, mode="bilinear")
             flow = flow + dt * v_at
         return flow
 
@@ -212,7 +228,14 @@ class LDDMM(nn.Module):
             raise ValueError("source 的空间尺寸与 LDDMM 初始化尺寸不一致。{} != {}".format(source.shape[-2:], (self.height, self.width)))
 
         flow = self._integrate_flow(source.shape[0], source.device, source.dtype)
-        warped = warp_image(source, flow)
+        warped = warp_image(
+            source,
+            flow,
+            mode=self.interp_mode,
+            padding_mode=self.padding_mode,
+            align_corners=self.align_corners,
+            mass_preserve=self.mass_preserve,
+        )
 
         loss_w2 = self._barycenter_loss(warped, neighbors, weights)
         loss_reg = gradient_l2(self.velocity) * self.reg_weight

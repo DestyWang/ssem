@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from typing import Iterable, Tuple
+from typing import Iterable, Optional, Tuple
 
 import torch
 import torch.nn.functional as F
+import matplotlib.pyplot as plt
 
 Tensor = torch.Tensor
 
@@ -84,7 +85,7 @@ def identity_grid(height: int, width: int, device: torch.device, dtype: torch.dt
     return grid.unsqueeze(0)
 
 
-def _flow_to_normalized(flow: Tensor, height: int, width: int) -> Tensor:
+def flow_to_normalized(flow: Tensor, height: int, width: int) -> Tensor:
     """
     将像素位移场转换到 [-1, 1] 标准化坐标。
 
@@ -111,7 +112,51 @@ def _flow_to_normalized(flow: Tensor, height: int, width: int) -> Tensor:
     return torch.stack([flow_x, flow_y], dim=-1)
 
 
-def warp_image(image: Tensor, flow: Tensor) -> Tensor:
+def jacobian_determinant(flow: Tensor, eps: float = 1e-6) -> Tensor:
+    """
+    计算位移场对应的雅可比行列式 det(Dphi)。
+
+    参数
+    ----
+    flow : torch.Tensor
+        形状为 (B, 2, H, W)，单位为像素。
+    eps : float
+        稳定项，避免极小或负值。
+
+    返回
+    ----
+    torch.Tensor
+        形状为 (B, 1, H, W)。
+    """
+    if flow.ndim != 4 or flow.shape[1] != 2:
+        raise ValueError("jacobian_determinant 期望 flow 形状为 (B, 2, H, W)。")
+
+    u = flow[:, 0]
+    v = flow[:, 1]
+
+    du_dx = u[:, :, 1:] - u[:, :, :-1]
+    du_dx = F.pad(du_dx, (0, 1, 0, 0), mode="replicate")
+    du_dy = u[:, 1:, :] - u[:, :-1, :]
+    du_dy = F.pad(du_dy, (0, 0, 0, 1), mode="replicate")
+
+    dv_dx = v[:, :, 1:] - v[:, :, :-1]
+    dv_dx = F.pad(dv_dx, (0, 1, 0, 0), mode="replicate")
+    dv_dy = v[:, 1:, :] - v[:, :-1, :]
+    dv_dy = F.pad(dv_dy, (0, 0, 0, 1), mode="replicate")
+
+    det = (1.0 + du_dx) * (1.0 + dv_dy) - du_dy * dv_dx
+    det = torch.clamp(det, min=eps)
+    return det.unsqueeze(1)
+
+
+def warp_image(
+    image: Tensor,
+    flow: Tensor,
+    mode: str = "bilinear",
+    padding_mode: str = "border",
+    align_corners: bool = True,
+    mass_preserve: bool = False,
+) -> Tensor:
     """
     使用位移场对图像进行变形。
 
@@ -133,18 +178,22 @@ def warp_image(image: Tensor, flow: Tensor) -> Tensor:
         raise ValueError("warp_image 期望 flow 形状为 (B, 2, H, W)。")
     b, _, h, w = image.shape
     grid = identity_grid(h, w, image.device, image.dtype)
-    flow_norm = _flow_to_normalized(flow, h, w)
+    flow_norm = flow_to_normalized(flow, h, w)
     sample_grid = grid + flow_norm
-    return F.grid_sample(
+    warped = F.grid_sample(
         image,
         sample_grid,
-        mode="bilinear",
-        padding_mode="border",
-        align_corners=True,
+        mode=mode,
+        padding_mode=padding_mode,
+        align_corners=align_corners,
     )
+    if mass_preserve:
+        jac = jacobian_determinant(flow)
+        warped = warped * jac
+    return warped
 
 
-def sample_field(field: Tensor, flow: Tensor) -> Tensor:
+def sample_field(field: Tensor, flow: Tensor, mode: str = "bilinear") -> Tensor:
     """
     在位移后的坐标处采样向量场。
 
@@ -160,7 +209,7 @@ def sample_field(field: Tensor, flow: Tensor) -> Tensor:
     torch.Tensor
         形状为 (B, C, H, W)。
     """
-    return warp_image(field, flow)
+    return warp_image(field, flow, mode=mode, padding_mode="border", align_corners=True, mass_preserve=False)
 
 
 def gaussian_kernel2d(sigma: float, device: torch.device, dtype: torch.dtype) -> Tensor:
@@ -238,3 +287,130 @@ def gradient_l2(field: Tensor) -> Tensor:
     dx = field[..., 1:] - field[..., :-1]
     dy = field[..., 1:, :] - field[..., :-1, :]
     return (dx.pow(2).mean() + dy.pow(2).mean())
+
+
+def plot_2d_velocity_field(
+    velocity: Tensor,
+    t: int = 0,
+    stride: int = 8,
+    scale: float = 1.0,
+    ax: Optional[plt.Axes] = None,
+    title: Optional[str] = None,
+    figsize: Optional[Tuple[float, float]] = None,
+) -> plt.Axes:
+    """
+    可视化二维速度场（quiver）。
+
+    参数
+    ----
+    velocity : torch.Tensor
+        形状为 (T, 2, H, W)。
+    t : int
+        时间点索引。
+    stride : int
+        下采样步长，控制箭头密度。
+    scale : float
+        箭头缩放系数。
+    ax : matplotlib.axes.Axes | None
+        外部传入坐标轴。
+    title : str | None
+        图标题。
+    figsize : tuple | None
+        图像大小。
+
+    返回
+    ----
+    matplotlib.axes.Axes
+    """
+    if velocity.ndim != 4 or velocity.shape[1] != 2:
+        raise ValueError("velocity 期望形状为 (T, 2, H, W)。")
+    if not (0 <= t < velocity.shape[0]):
+        raise ValueError("t 超出范围。")
+    v = velocity[t].detach().cpu().float()
+    u = v[0]
+    w = v[1]
+    h, wdim = u.shape
+    ys = torch.arange(0, h, stride)
+    xs = torch.arange(0, wdim, stride)
+    grid_y, grid_x = torch.meshgrid(ys, xs, indexing="ij")
+
+    if ax is None:
+        _, ax = plt.subplots(figsize=figsize)
+    ax.quiver(
+        grid_x.numpy(),
+        grid_y.numpy(),
+        u[grid_y, grid_x].numpy(),
+        w[grid_y, grid_x].numpy(),
+        angles="xy",
+        scale_units="xy",
+        scale=1.0 / max(scale, 1e-8),
+        width=0.0025,
+    )
+    ax.invert_yaxis()
+    if title is None:
+        title = f"Velocity field at t={t}"
+    ax.set_title(title)
+    ax.set_aspect("equal")
+    return ax
+
+
+def plot_flow_grid(
+    flow: Tensor,
+    grid_spacing: int = 16,
+    ax: Optional[plt.Axes] = None,
+    title: Optional[str] = None,
+    figsize: Optional[Tuple[float, float]] = None,
+) -> plt.Axes:
+    """
+    可视化形变场对规则网格的扭曲效果。
+
+    参数
+    ----
+    flow : torch.Tensor
+        形状为 (2, H, W) 或 (B, 2, H, W)。
+    grid_spacing : int
+        网格线间距（像素）。
+    ax : matplotlib.axes.Axes | None
+        外部传入坐标轴。
+    title : str | None
+        图标题。
+    figsize : tuple | None
+        图像大小。
+    返回
+    ----
+    matplotlib.axes.Axes
+    """
+    if flow.ndim == 4:
+        flow = flow[0]
+    if flow.ndim != 3 or flow.shape[0] != 2:
+        raise ValueError("flow 期望形状为 (2, H, W) 或 (B, 2, H, W)。")
+    u = flow[0].detach().cpu().float()
+    v = flow[1].detach().cpu().float()
+    h, w = u.shape
+
+    if ax is None:
+        _, ax = plt.subplots(figsize=figsize)
+
+    ys = torch.arange(0, h, grid_spacing)
+    xs = torch.arange(0, w, grid_spacing)
+
+    for y in ys:
+        x_coords = torch.arange(0, w)
+        y_coords = torch.full((w,), float(y))
+        x_warp = x_coords + u[y.long(), x_coords]
+        y_warp = y_coords + v[y.long(), x_coords]
+        ax.plot(x_warp.numpy(), y_warp.numpy(), color="C0", linewidth=0.8)
+
+    for x in xs:
+        y_coords = torch.arange(0, h)
+        x_coords = torch.full((h,), float(x))
+        x_warp = x_coords + u[y_coords, x.long()]
+        y_warp = y_coords + v[y_coords, x.long()]
+        ax.plot(x_warp.numpy(), y_warp.numpy(), color="C0", linewidth=0.8)
+
+    ax.invert_yaxis()
+    if title is None:
+        title = "Warped grid"
+    ax.set_title(title)
+    ax.set_aspect("equal")
+    return ax
