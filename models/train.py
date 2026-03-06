@@ -80,7 +80,7 @@ def get_loss(
     参数
     ----
     name : str
-        损失名称，支持 "w2" / "wasserstein" / "l2"。
+        损失名称，支持 "w2" / "wasserstein" / "l2" / "ncc"。
     source : torch.Tensor
         形状为 (B, H, W)。
     target : torch.Tensor
@@ -98,6 +98,19 @@ def get_loss(
             raise ValueError("L2 损失期望 source/target 形状为 (B, H, W)/(N, H, W)。")
         diff = source.unsqueeze(1) - target.unsqueeze(0)
         return diff.pow(2).mean(dim=(-2, -1)).squeeze(0)
+    if name in ("ncc", "NCC"):
+        if source.ndim != 3 or target.ndim != 3:
+            raise ValueError("NCC 损失期望 source/target 形状为 (B, H, W)/(N, H, W)。")
+        # 计算归一化相关系数（NCC）
+        sm = source - source.mean(dim=(1, 2), keepdim=True)
+        tm = target - target.mean(dim=(1, 2), keepdim=True)
+        sm2 = (sm ** 2).sum(dim=(1, 2), keepdim=False)
+        tm2 = (tm ** 2).sum(dim=(1, 2), keepdim=False)
+        denominator = torch.sqrt(sm2 * tm2 + 1e-8)
+        numerator = (sm * tm).sum(dim=(1, 2), keepdim=False)
+        ncc = numerator / denominator
+        # 为确保可正确反向传播，返回的损失需要是可参与梯度计算的标量或张量
+        return 1 - ncc
     raise ValueError(f"未知损失类型: {name}")
 
 
@@ -274,6 +287,7 @@ def train_global_alignment(
                     },
                     os.path.join(out_dir, f"checkpoint_{epoch}.pt"),
                 )
+                torch.save([f.detach().cpu() for f in flow_list], os.path.join(out_dir, f"checkpoint_{epoch}_flows.pt"))
 
             if early_stop.step(loss_total_val):
                 logger.info("早停触发: 波动小于阈值，停止训练。")

@@ -1,1 +1,19 @@
 nohup: ignoring input
+2026-03-06 15:39:53,055 | INFO | 输出目录: /home/bcl/wanghongyu/wanghongyu_humx/dynamic/ssem/outputs/20260306_153953
+2026-03-06 15:39:53,083 | INFO | preprocess slices shape: torch.Size([125, 1, 312, 312])
+/home/bcl/wanghongyu/wanghongyu_humx/dynamic/ssem/models/gpu_utils.py:10: VisibleDeprecationWarning: This function is deprecated and will be removed in a future release. Use the cupy.from_dlpack() array constructor instead.
+  def torch_to_cupy(x): return cp.fromDlpack(to_dlpack(x))
+/home/bcl/wanghongyu/wanghongyu_humx/dynamic/ssem/models/gpu_utils.py:9: VisibleDeprecationWarning: This function is deprecated and will be removed in a future release. Use the cupy.from_dlpack() array constructor instead.
+  def cupy_to_torch(x): return from_dlpack(x.toDlpack())
+2026-03-06 15:40:15,087 | INFO | epoch=1 loss_total=9.043651 loss_w2=9.043651 loss_reg=0.000000
+2026-03-06 15:40:30,289 | INFO | epoch=2 loss_total=9.033434 loss_w2=9.033434 loss_reg=0.000000
+2026-03-06 15:40:46,997 | INFO | epoch=3 loss_total=9.023347 loss_w2=9.023346 loss_reg=0.000001
+2026-03-06 15:41:03,315 | INFO | epoch=4 loss_total=9.013404 loss_w2=9.013403 loss_reg=0.000001
+2026-03-06 15:41:20,162 | INFO | epoch=5 loss_total=9.003587 loss_w2=9.003585 loss_reg=0.000002
+2026-03-06 15:41:37,711 | INFO | epoch=6 loss_total=8.993909 loss_w2=8.993905 loss_reg=0.000004
+2026-03-06 15:41:54,245 | INFO | epoch=7 loss_total=8.984355 loss_w2=8.984350 loss_reg=0.000005
+2026-03-06 15:42:10,947 | INFO | epoch=8 loss_total=8.974934 loss_w2=8.974927 loss_reg=0.000007
+2026-03-06 15:42:27,873 | INFO | epoch=9 loss_total=8.965633 loss_w2=8.965624 loss_reg=0.000009
+2026-03-06 15:42:44,813 | INFO | epoch=10 loss_total=8.956460 loss_w2=8.956449 loss_reg=0.000012
+2026-03-06 15:43:01,832 | INFO | epoch=11 loss_total=8.947399 loss_w2=8.947385 loss_reg=0.000014
+2026-03-06 15:43:19,312 | INFO | epoch=12 loss_total=8.938469 loss_w2=8.938452 loss_reg=0.000017
