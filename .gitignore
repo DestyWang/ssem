@@ -1,5 +1,6 @@
 data
 EFSR
 UTO
+feature_extractor
 **/__pycache__
 outputs/
